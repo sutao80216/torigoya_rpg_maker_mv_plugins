@@ -1,13 +1,18 @@
 /*---------------------------------------------------------------------------*
  * Torigoya_AutoItems.js
  *---------------------------------------------------------------------------*
- * 2018/05/12 ru_shalm
+ * 2019/05/12 ru_shalm
  * http://torigoya.hatenadiary.jp/
  *---------------------------------------------------------------------------*/
 
 /*:
  * @plugindesc Automatic use items or skills when damaged by enemy.
  * @author ru_shalm
+ *
+ * @param Enable Switch ID
+ * @desc Switch ID that enables this plugin (None: Always)
+ * @type switch
+ * @default 0
  *
  * @help
  * Automatic use items or skills when damaged by enemy.
@@ -28,6 +33,11 @@
 /*:ja
  * @plugindesc ダメージ時自動アイテム/スキル使用さん
  * @author ru_shalm
+ *
+ * @param Enable Switch ID
+ * @desc このプラグインを有効にするスイッチ (なし: 常に有効)
+ * @type switch
+ * @default 0
  *
  * @help
  * 戦闘中に攻撃を受けた際、自動的に発動するスキル/アイテムを設定できます。
@@ -65,6 +75,12 @@
     var AutoItems = {
         name: 'Torigoya_AutoItems'
     };
+    AutoItems.settings = (function () {
+        var parameters = PluginManager.parameters(AutoItems.name);
+        return {
+            enableSwitchID: Number(parameters['Enable Switch ID'] || 0)
+        };
+    })();
 
     // -------------------------------------------------------------------------
     // AutoItems_Manager
@@ -108,6 +124,10 @@
         this._movedBattlers = [];
         this._applyedBattlers = [];
         this._nowPlayingActionSet = null;
+        if (this._currentForcedTurnFlag !== undefined) {
+            BattleManager._turnForced = this._currentForcedTurnFlag;
+            delete this._currentForcedTurnFlag;
+        }
     };
 
     /**
@@ -115,6 +135,7 @@
      * @param {AutoItems_ActionSet} actionSet
      */
     AutoItems_Manager.prototype.insertInterruptAction = function (actionSet) {
+        this._currentForcedTurnFlag = BattleManager.isForcedTurn();
         this._nowPlayingActionSet = actionSet;
         actionSet.subject.torigoya_autoItemsInterruptAction(actionSet.item, actionSet.target);
         BattleManager.torigoya_autoItemsInterruptAction(actionSet.subject);
@@ -163,7 +184,7 @@
             if (a.rule.type !== b.rule.type) return a.rule.type - b.rule.type;
 
             // 発動条件優先度
-            var aValue, bValue;
+            var aValue = 0, bValue = 0;
             switch (a.rule.conditionType) {
                 // ステート優先度
                 case AutoItems_Rule.conditionTypes.state:
@@ -351,7 +372,8 @@
         state: 0,
         hp: 1,
         mp: 2,
-        tp: 3
+        tp: 3,
+        onEvaded: 11
     };
 
     Object.defineProperties(AutoItems_Rule.prototype, {
@@ -451,6 +473,8 @@
                 return this._isApplicableTP(target, actionResult);
             case AutoItems_Rule.conditionTypes.state:
                 return this._isApplicableState(target, actionResult);
+            case AutoItems_Rule.conditionTypes.onEvaded:
+                return this._isApplicableOnEvaded(target, actionResult);
             default:
                 return false;
         }
@@ -516,6 +540,17 @@
     };
 
     /**
+     * [onEvaded] ルールが適用可能であるか？
+     * @param {Game_BattlerBase} _target         被弾対象
+     * @param {Game_ActionResult} actionResult  行動結果の情報
+     * @returns {boolean}
+     * @private
+     */
+    AutoItems_Rule.prototype._isApplicableOnEvaded = function (_target, actionResult) {
+        return actionResult.evaded || actionResult.missed;
+    };
+
+    /**
      * 戦闘不能を理由に発動するルールであるか？
      * @returns {boolean}
      */
@@ -547,7 +582,7 @@
         }
     };
 
-    AutoItems_Rule.metaRegexp = /^(AutoItem|AutoSkill)(Me|Friend)\/(hp|mp|tp|state)\[(\d+%?)\]$/;
+    AutoItems_Rule.metaRegexp = /^(AutoItem|AutoSkill)(Me|Friend)\/(hp|mp|tp|state|onEvaded)\[(\d+%?)\]$/;
     AutoItems_Rule.likeCSVRegexp = new RegExp('\\s*,\\s*');
     AutoItems.AutoItems_Rule = AutoItems_Rule;
 
@@ -654,12 +689,20 @@
 
         if (AutoItems.manager.phase === 'play') {
             var actionSet = AutoItems.manager.pickActionableRuleSet();
-            if (actionSet) {
+            if (AutoItems.isEnabled() && actionSet) {
                 AutoItems.manager.insertInterruptAction(actionSet);
             } else {
                 AutoItems.manager.reset();
             }
         }
+    };
+
+    /**
+     * オートアイテムが有効であるか？
+     * @returns {boolean}
+     */
+    AutoItems.isEnabled = function () {
+        return AutoItems.settings.enableSwitchID === 0 || $gameSwitches.value(AutoItems.settings.enableSwitchID);
     };
 
     // -------------------------------------------------------------------------
@@ -753,8 +796,8 @@
     };
 
     // BattleManager.invokeActionのタイミングだと、かばうでtargetが変わる可能性があるので×
-    var upstream_Window_BattleLog_displayActionResults= Window_BattleLog.prototype.displayActionResults;
-    Window_BattleLog.prototype.displayActionResults = function(subject, target) {
+    var upstream_Window_BattleLog_displayActionResults = Window_BattleLog.prototype.displayActionResults;
+    Window_BattleLog.prototype.displayActionResults = function (subject, target) {
         upstream_Window_BattleLog_displayActionResults.apply(this, arguments);
         AutoItems.recordAction(subject, target);
     };
